@@ -395,12 +395,23 @@ cmd_new() {
   printf 'started %s (%s) in %s\n' "$session" "$agent" "$workdir"
 }
 
+cmd_task() {
+  [ $# -ge 2 ] || die "usage: vibe task <session> <description...>"
+  local session="$1"; shift
+  local desc="$*"
+  mkdir -p "$VIBE_TASK_DIR" || die "cannot create task dir: $VIBE_TASK_DIR"
+  printf '%s\n' "$desc" > "$VIBE_TASK_DIR/$session.txt" \
+    || die "failed to write task for $session"
+  printf 'task set for %s\n' "$session"
+}
+
 cmd_kill() {
   [ $# -ge 1 ] || die "usage: vibe kill <session>"
   local session="$1"
   have_session "$session" || die "no such session: $session"
   tmux kill-session -t "$session" || die "failed to kill $session"
   tmux delete-buffer -b "$(bufkey "$session")" 2>/dev/null || true
+  rm -f "$VIBE_TASK_DIR/$session.txt" 2>/dev/null || true
   printf 'killed %s\n' "$session"
 }
 
@@ -414,12 +425,13 @@ vibe — shell API for Hermes agent orchestration
   vibe list                                     JSON array of agent session names
   vibe list --pretty                            session names, one per line
   vibe send <session> <message...>              send a message (CJK-safe), press Enter
+  vibe task <session> <description...>          set the task shown for a session in `vibe summary`
   vibe new  <agent> <session> <workdir> <task>  spawn agent (claude|codex|opencode), paste task
   vibe kill <session>                           tear a session down cleanly
 
 state is one of: idle 🟢 · working 🔵 · waiting-input 🟡 · unknown 🔴
 
-env: VIBE_AGENTS, VIBE_COLS, VIBE_ROWS, VIBE_BOOT_WAIT, VIBE_SAMPLE,
+env: VIBE_AGENTS, VIBE_COLS, VIBE_ROWS, VIBE_BOOT_WAIT, VIBE_SAMPLE, VIBE_TASK_DIR,
      VIBE_CLAUDE_FLAGS / VIBE_CODEX_FLAGS / VIBE_OPENCODE_FLAGS
 EOF
 }
@@ -432,6 +444,7 @@ main() {
     summary)           cmd_summary "$@";;
     list|ls)           cmd_list "$@";;
     send)              cmd_send "$@";;
+    task)              cmd_task "$@";;
     new)               cmd_new "$@";;
     kill)              cmd_kill "$@";;
     -h|--help|help)    usage;;
