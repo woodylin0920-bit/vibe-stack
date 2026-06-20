@@ -11,6 +11,7 @@ A Hermes skill playbook for **controlling coding agents from your phone** — sp
 | [`agent-manager`](agent-manager/SKILL.md) | The **control plane** — open an agent (Claude Code / Codex / OpenCode) in a project, send tasks, drive slash commands and control keys remotely, detect interactive prompts, check status, and handle auth. Scales to **multi-agent fleets**: lanes (worktree + branch + session + log), race mode, a review gate, and a merge captain — spawn agents, assign tasks, review, and merge work, all from chat. |
 | [`claude-code`](claude-code/SKILL.md) | Deep orchestration guide for the **Claude Code CLI** — print vs interactive PTY modes, the essential flag reference, settings & `CLAUDE.md` hierarchy, slash commands, hooks, subagents, MCP, PR-review patterns, and `--remote-control`. |
 | [`codex`](codex/SKILL.md) | Orchestration guide for the **OpenAI Codex CLI** — one-shot `codex exec`, `--full-auto` / `--yolo` modes, PTY + git-repo requirements, background/tmux driving, and PR review. |
+| [`coffee-time`](coffee-time/SKILL.md) | Multi-agent **brainstorm** — fan one question to N agents on intentionally different models, run them independently, synthesize with Opus, and present options to the user. |
 
 ## Contents
 
@@ -21,8 +22,13 @@ claude-code/
   SKILL.md    # Claude Code CLI orchestration guide
 codex/
   SKILL.md    # OpenAI Codex CLI orchestration guide
+coffee-time/
+  SKILL.md    # multi-agent brainstorm mode
+dashboard/
+  server.py   # real-time agent dashboard (phone-friendly)
 docs/
-  deployment.md  # run the orchestrator on macOS or a Linux VPS
+  deployment.md  # run the orchestrator on a VPS (recommended) or macOS
+GETTING-STARTED.md  # cloud-first quickstart
 ```
 
 ## Install as a Hermes skill

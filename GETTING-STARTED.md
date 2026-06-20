@@ -23,7 +23,7 @@ Full step-by-step (commands, systemd unit, auth): **[docs/deployment.md](docs/de
 | [`agent-manager`](agent-manager/SKILL.md) | The control plane — open agents, send tasks, drive slash commands/keys remotely, run multi-agent **fleets** (lanes, race mode, review gate, merge captain), with model routing and the goal-driven `/loop`. **Start here.** |
 | [`claude-code`](claude-code/SKILL.md) | Drive the Claude Code CLI (print vs interactive, flags, `--remote-control`). |
 | [`codex`](codex/SKILL.md) | Drive the OpenAI Codex CLI. |
-| `coffee-time` *(on `feature/coffee-time`)* | Multi-agent **brainstorm** — fan a question to N models, synthesize with Opus, present options. |
+| [`coffee-time`](coffee-time/SKILL.md) | Multi-agent **brainstorm** — fan a question to N models, synthesize with Opus, present options. |
 
 Install a skill:
 ```bash
@@ -35,4 +35,4 @@ hermes skills install https://raw.githubusercontent.com/woodylin0920-bit/vibe-st
 - **Drive to the goal, escalate every real decision** — it self-heals the mechanical path toward your goal, but every irreversible/ambiguous/taste call comes back to you. The user decides.
 
 ## Optional: the dashboard
-A single-file web dashboard shows live agent sessions (working/idle/blocked), output, and a git-derived kanban, with per-agent controls — open it from your phone. See `dashboard/` (on the `feature/dashboard` branch).
+A single-file web dashboard shows live agent sessions (working/idle/blocked), output, and a git-derived kanban, with per-agent controls — open it from your phone. See [`dashboard/`](dashboard/) — run `python3 dashboard/server.py`.
