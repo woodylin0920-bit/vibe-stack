@@ -6,7 +6,7 @@ A Hermes skill playbook for **controlling coding agents from your phone** — sp
 
 | Skill | What it does |
 |-------|--------------|
-| [`agent-manager`](agent-manager/SKILL.md) | The **control plane** — open an agent (Claude Code / Codex / OpenCode) in a project, send tasks, drive slash commands and control keys remotely via the orchestrator, detect interactive prompts, check status, review output, and handle each agent's launch + auth. |
+| [`agent-manager`](agent-manager/SKILL.md) | The **control plane** — open an agent (Claude Code / Codex / OpenCode) in a project, send tasks, drive slash commands and control keys remotely, detect interactive prompts, check status, and handle auth. Scales to **multi-agent fleets**: lanes (worktree + branch + session + log), race mode, a review gate, and a merge captain — spawn agents, assign tasks, review, and merge work, all from chat. |
 | [`claude-code`](claude-code/SKILL.md) | Deep orchestration guide for the **Claude Code CLI** — print vs interactive PTY modes, the essential flag reference, settings & `CLAUDE.md` hierarchy, slash commands, hooks, subagents, MCP, PR-review patterns, and `--remote-control`. |
 | [`codex`](codex/SKILL.md) | Orchestration guide for the **OpenAI Codex CLI** — one-shot `codex exec`, `--full-auto` / `--yolo` modes, PTY + git-repo requirements, background/tmux driving, and PR review. |
 

@@ -1,13 +1,13 @@
 ---
 name: agent-manager
 description: "Remote control plane for coding agents (Claude Code, Codex, OpenCode) — open an agent in a project, send tasks, drive slash commands/keys from a chat app, check status, review output, and handle per-agent auth."
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [Orchestration, Coding-Agent, Remote-Control, tmux, Telegram, Automation]
+    tags: [Orchestration, Coding-Agent, Remote-Control, Multi-Agent, Worktree, tmux, Telegram, Automation]
     related_skills: [claude-code, codex, opencode]
 ---
 
@@ -173,6 +173,76 @@ For any agent not listed, capture five facts before driving it remotely:
 
 ---
 
+## Multi-agent orchestration (fleets)
+
+Everything above drives **one** agent. To "spawn agents, assign tasks, review output, merge work" you scale to a **fleet** — many agents working in parallel, each isolated, with a disciplined path to `main`. The unit of work is the **lane**.
+
+### The lane primitive (first-class)
+
+A **lane** is one unit of parallel work = **worktree + branch + agent session + status log**. All four share one slug so they're trivially linkable:
+
+| Component | What | Example (slug `feat-x`) |
+|-----------|------|-------------------------|
+| **worktree** | isolated `git worktree` so agents never collide on the working tree | `../lanes/feat-x` |
+| **branch** | dedicated branch; agents commit here, **never to main** | `lane/feat-x` |
+| **agent session** | the tmux/PTY session driving the agent in that worktree | `claude-feat-x` |
+| **status log** | append-only file: state, last poll, prompts surfaced, result | `.lanes/feat-x.md` |
+
+Open a lane:
+```
+git -C /repo worktree add ../lanes/feat-x -b lane/feat-x
+tmux new-session -d -s claude-feat-x -x 140 -y 40
+tmux send-keys -t claude-feat-x 'cd /repo/../lanes/feat-x && claude --remote-control feat-x' Enter
+# then inject the task spec as the first task; poll per the Prime directive
+```
+The [Prime directive](#️-prime-directive--never-go-silent) applies **per lane** — poll each one, surface each one's prompts.
+
+### Task spec (the work order)
+
+Every lane starts from a **task spec** — a small markdown/YAML doc that is the contract the agent builds to and reviewers check against:
+```yaml
+goal: <one sentence — what success looks like>
+constraints: [<rules the agent must respect, e.g. "no new deps", "keep API stable">]
+target_files: [<paths likely to change>]
+test_command: <how to verify, e.g. "npm test">
+done_criteria: [<observable conditions: tests green, lints clean, feature reachable>]
+```
+Inject the spec as the agent's first task. The review gate and merge captain judge work against `done_criteria` + `test_command` — not vibes.
+
+### Race mode
+
+Run the **same task spec across multiple agents/worktrees**, then keep the best result:
+1. **Fan out** N lanes from one spec — vary the agent or model (Claude vs Codex vs OpenCode; opus vs sonnet) to get genuinely different attempts.
+2. Each lane produces a diff on its own branch.
+3. **Compare:** `git diff main...lane/<slug>` per lane; run the spec's `test_command` in each; score against `done_criteria`.
+4. **Keep the winner** (merge its branch via the gate below); discard the rest (`git worktree remove` + delete branch + kill session).
+
+Use when the approach is uncertain and you'd rather pick from several attempts than iterate one.
+
+### Review gate (before any merge)
+
+No lane reaches `main` without passing the gate — surface the result to the user, then let the merge captain decide:
+1. **Diff** — `git diff main...lane/<slug>`; scope check: did it touch only the expected `target_files`?
+2. **Tests** — run `test_command`; must pass.
+3. **Reviewer agent (optional)** — a *separate* agent reviews the diff against the spec for correctness, security, and scope creep, e.g. `claude -p 'Review this diff against the task spec. Flag bugs, security, and scope creep.' --max-turns 1`.
+
+### Merge captain
+
+A single **integration role** owns `main`. **Agents never self-merge `main`.**
+- Agents commit only to their `lane/<slug>` branch.
+- The merge captain (a dedicated role/agent, or the orchestrator itself) is the **only** one that merges gate-passing lanes into `main`, **one at a time**, re-running `test_command` after each integration to catch cross-lane conflicts before the next merge.
+- This serializes integration, keeps `main` always-green, and prevents racey concurrent merges.
+
+### Fleet lifecycle (Kanban model)
+
+Track lanes on a board: **spec → in-progress → in-review → merged / discarded**. On merge or discard, tear the lane down: `git worktree remove <path>`, delete the branch, `tmux kill-session`, archive the status log.
+
+### Prior art
+- **[claude-squad](https://github.com/smtg-ai/claude-squad)** — terminal orchestrator that manages multiple agents (Claude Code, Codex, OpenCode, Amp) with **tmux + git-worktree** isolation; the lane/session model here mirrors it.
+- **[vibe-kanban](https://github.com/BloopAI/vibe-kanban)** — a **Kanban board** where each task card provisions a branch + workspace and flows To-Do → In-Progress → Review → Done with one-click PRs; the task-spec → lane → gate → merge flow here is the same shape.
+
+---
+
 ## Rules — human-in-the-loop
 
 ### ⚠️ Never go silent (prime directive)
@@ -201,4 +271,6 @@ After a task finishes, summarize to the user what changed (files, commits, test 
 5. **Codex must run inside a git repo** — it refuses otherwise.
 6. **Remote re-auth needs the URL surfaced** — capture it from the pane and send it to the user; don't click Authorize yourself.
 7. **Going silent after dispatch** — the cardinal sin (see [Prime directive](#️-prime-directive--never-go-silent)). An agent stuck on a dialog looks like it's "still working"; without proactive polling + prompt detection you'll never notice. Poll after every injection; surface prompts unprompted.
-8. **Clean up tmux sessions** — `tmux kill-session` when done, or they leak.
+8. **Clean up tmux sessions** — `tmux kill-session` when done, or they leak. For fleets, also `git worktree remove` + delete the branch, or worktrees pile up.
+9. **Agents self-merging `main`** — forbidden. Agents commit only to `lane/<slug>`; only the [merge captain](#merge-captain) integrates, one lane at a time with tests re-run. Concurrent self-merges corrupt `main`.
+10. **Parallel agents without worktree isolation** — multiple agents in the same working tree clobber each other. One [lane](#the-lane-primitive-first-class) = one `git worktree`, always.
