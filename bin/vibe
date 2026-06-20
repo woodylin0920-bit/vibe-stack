@@ -98,9 +98,45 @@ detect_state() {
   printf 'idle'
 }
 
+# Status → status light for the human-readable (--pretty) view.
+state_emoji() {
+  case "$1" in
+    idle)          printf '🟢';;
+    working)       printf '🔵';;
+    waiting-input) printf '🟡';;
+    *)             printf '🔴';;
+  esac
+}
+
+# Replace a leading $HOME with ~ for compact display.
+home_short() {
+  local p="$1" h="${HOME:-}"
+  if [ -n "$h" ]; then
+    case "$p" in
+      "$h")   printf '~';      return;;
+      "$h"/*) printf '~%s' "${p#"$h"}"; return;;
+    esac
+  fi
+  printf '%s' "$p"
+}
+
+# Echo the name of every tmux session running a coding agent, one per line.
+agent_sessions() {
+  local name cmd
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    cmd=$(tmux display-message -p -t "$name" '#{pane_current_command}' 2>/dev/null) || continue
+    classify "$name" "$cmd" >/dev/null || continue
+    printf '%s\n' "$name"
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
+}
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 cmd_status() {
+  local pretty=0
+  [ "${1:-}" = "--pretty" ] && pretty=1
+
   # Two-pass capture sharing a single sleep, so motion detection costs one
   # VIBE_SAMPLE regardless of how many sessions are running.
   local tmp; tmp=$(mktemp -d "${TMPDIR:-/tmp}/vibe.XXXXXX") || die "mktemp failed"
@@ -119,16 +155,26 @@ cmd_status() {
     printf '%s\t%s\t%s\t%s\n' "$name" "$agent" "$path" "$key" >> "$meta"
   done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
 
-  if [ ! -s "$meta" ]; then echo '[]'; return; fi
+  if [ ! -s "$meta" ]; then
+    [ "$pretty" -eq 1 ] && echo "no agent sessions running" || echo '[]'
+    return
+  fi
 
   sleep "$VIBE_SAMPLE"
 
-  # Pass 2: re-capture, classify, emit JSON.
+  # Pass 2: re-capture, classify. JSON mode emits per session; pretty mode
+  # collects aligned rows (state, name, agent, ~-shortened workdir — no lines).
+  local rows="$tmp/rows"; : > "$rows"
   local out="" first=1 before after state last3 lines_json esc ln
   while IFS=$'\t' read -r name agent path key; do
     before=$(cat "$tmp/A.$key" 2>/dev/null)
     after=$(capture_tail "$name")
     state=$(detect_state "$before" "$after")
+
+    if [ "$pretty" -eq 1 ]; then
+      printf '%s\t%s\t%s\t%s\n' "$name" "$agent" "$state" "$(home_short "$path")" >> "$rows"
+      continue
+    fi
 
     last3=$(printf '%s\n' "$after" | grep -v '^[[:space:]]*$' | tail -3)
     lines_json=""
@@ -148,6 +194,32 @@ cmd_status() {
     out="$out\"lines\":[$lines_json]}"
   done < "$meta"
 
+  if [ "$pretty" -eq 0 ]; then printf '[%s]\n' "$out"; return; fi
+
+  # Pretty: pad name/agent/state columns to their widest value, then print.
+  local wn=0 wa=0 ws=0 n a s d
+  while IFS=$'\t' read -r n a s d; do
+    [ ${#n} -gt "$wn" ] && wn=${#n}
+    [ ${#a} -gt "$wa" ] && wa=${#a}
+    [ ${#s} -gt "$ws" ] && ws=${#s}
+  done < "$rows"
+  while IFS=$'\t' read -r n a s d; do
+    printf '%s %-*s │ %-*s │ %-*s │ %s\n' "$(state_emoji "$s")" "$wn" "$n" "$wa" "$a" "$ws" "$s" "$d"
+  done < "$rows"
+}
+
+cmd_list() {
+  local pretty=0
+  [ "${1:-}" = "--pretty" ] && pretty=1
+  if [ "$pretty" -eq 1 ]; then
+    agent_sessions
+    return
+  fi
+  local out="" first=1 n
+  while IFS= read -r n; do
+    [ "$first" -eq 1 ] && first=0 || out="$out,"
+    out="$out\"$(printf '%s' "$n" | json_escape)\""
+  done < <(agent_sessions)
   printf '[%s]\n' "$out"
 }
 
@@ -205,11 +277,14 @@ usage() {
 vibe — shell API for Hermes agent orchestration
 
   vibe status                                   JSON: agent sessions, state, last 3 lines
+  vibe status --pretty                          human-readable table (no lines) — for chat/Telegram
+  vibe list                                     JSON array of agent session names
+  vibe list --pretty                            session names, one per line
   vibe send <session> <message...>              send a message (CJK-safe), press Enter
   vibe new  <agent> <session> <workdir> <task>  spawn agent (claude|codex|opencode), paste task
   vibe kill <session>                           tear a session down cleanly
 
-state is one of: idle · working · waiting-input
+state is one of: idle 🟢 · working 🔵 · waiting-input 🟡 · unknown 🔴
 
 env: VIBE_AGENTS, VIBE_COLS, VIBE_ROWS, VIBE_BOOT_WAIT, VIBE_SAMPLE,
      VIBE_CLAUDE_FLAGS / VIBE_CODEX_FLAGS / VIBE_OPENCODE_FLAGS
@@ -221,6 +296,7 @@ main() {
   local sub="$1"; shift
   case "$sub" in
     status)            cmd_status "$@";;
+    list|ls)           cmd_list "$@";;
     send)              cmd_send "$@";;
     new)               cmd_new "$@";;
     kill)              cmd_kill "$@";;
