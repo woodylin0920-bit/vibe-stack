@@ -84,14 +84,14 @@ detect_state() {
   if printf '%s' "$last" | grep -Eq '^[[:space:]]*❯[[:space:]]*[0-9]' \
      || printf '%s' "$last" | grep -Eq '\(y/[nN]\)|\[y/N\]|\[Y/n\]' \
      || printf '%s\n' "$after" | tail -8 | grep -Eqi \
-        'do you want|trust (this )?folder|do you trust|yes, (i )?accept|no, exit|press enter to|select (one|an option)|choose an option|would you like|overwrite\?|proceed\?|\(use arrow keys\)'; then
+        'do you want|trust (this )?folder|do you trust|yes, (i )?accept|no, exit|press enter to|select (one|an option)|choose an option|would you like|overwrite\?|proceed\?|\(use arrow keys\)|allow once|always allow|grant permission'; then
     printf 'waiting-input'; return
   fi
 
   # working: the pane changed between the two captures, or shows a run signature.
   if [ "$before" != "$after" ] \
      || printf '%s\n' "$after" | tail -6 | grep -Eqi \
-        'esc to interrupt|thinking…|generating|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|✶|✳|✦'; then
+        'esc to interrupt|\binterrupt\b|\bthinking\b|\bgenerating\b|working\.\.\.|working…|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|✶|✳|✦'; then
     printf 'working'; return
   fi
 
@@ -257,6 +257,15 @@ cmd_new() {
   if capture_tail "$session" 20 | grep -Eqi 'trust (this )?folder|do you trust'; then
     tmux send-keys -t "$session" C-m
     sleep 1
+  fi
+
+  # OpenCode's alt-screen TUI can take a few seconds to paint; wait for its input
+  # box before pasting so the task doesn't land in a half-drawn frame.
+  if [ "$agent" = "opencode" ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      capture_tail "$session" 40 | grep -q "Ask anything" && break
+      sleep 0.5
+    done
   fi
 
   inject "$session" "$task" || die "session $session is up, but pasting the task failed"
