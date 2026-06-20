@@ -1,7 +1,7 @@
 ---
 name: codex
 description: "Orchestrate Codex CLI through Hermes using tmux: auth, launch, monitoring, models, commands, and pitfalls."
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent + OpenAI
 license: MIT
 platforms: [linux, macos, windows]
@@ -193,6 +193,9 @@ Queued input: while Codex is running, press `Tab` after typing a follow-up or sl
 
 ## Machine Appendix: Hermes + tmux
 
+### ⚠️ Never go silent — poll after every interaction
+After **every** `send-keys` (task, slash command, or approval choice), `capture-pane` again in **3–5 s** to confirm the input landed and Codex advanced — a dropped Enter or a fresh approval prompt is invisible otherwise. Keep polling until Codex is **idle/done, errored, or waiting**, and surface any approval prompt / plan / numbered selection to the user **the instant it appears, unprompted**. "Sent" is not "done." Full pattern: the [`agent-manager` Prime directive](../agent-manager/SKILL.md#️-prime-directive--never-go-silent).
+
 ### Standard Hermes Recipe
 
 Use separate terminal calls rather than one giant shell line when possible; each step is easier to inspect and retry.
@@ -267,3 +270,5 @@ Before telling the user Codex finished:
 - Saved sessions are scoped by working directory unless using broader resume options. Start Codex in the target repo and use `--cd` for clarity.
 - `codex cloud` and local CLI runs are different surfaces. Local `/model` and `--model` do not control cloud task model selection.
 - Always inspect the working tree yourself after Codex edits; do not rely only on the TUI summary.
+- **CJK `send-keys` + Enter in one call drops the Enter** — with a Chinese/Japanese/Korean input method active on macOS, `tmux send-keys -t s "中文…" Enter` sends text but not Enter. Split into two calls (`send-keys "text"` then `send-keys "" Enter`), or inject via paste buffer: `printf '%s' "中文…" | tmux load-buffer -b k -; tmux paste-buffer -t s -b k -d; tmux send-keys -t s C-m`. English-only prompts are safe in one call.
+- **Don't report "sent" as "done"** — after every `send-keys`, `capture-pane` in 3–5 s to confirm Codex actually advanced and surface any approval prompt immediately (see "Never go silent" above).

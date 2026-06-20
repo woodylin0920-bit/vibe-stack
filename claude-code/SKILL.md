@@ -1,7 +1,7 @@
 ---
 name: claude-code
 description: "Drive the Claude Code CLI from an orchestrator — pick print vs interactive mode, orchestrate via tmux, handle dialogs/auth, and follow human-in-the-loop rules."
-version: 3.0.0
+version: 3.1.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
@@ -182,6 +182,9 @@ terminal(command="sleep 30 && for s in task1 task2; do echo \"== $s ==\"; tmux c
 
 ## Rules for Orchestrating Agents
 
+### ⚠️ Never go silent — poll after every interaction
+After **every** `send-keys` (task, slash command, or menu choice), `capture-pane` again in **3–5 s** to confirm the input landed and the session advanced — a dropped Enter or a freshly-appeared dialog is invisible otherwise. Keep polling until Claude is **done, errored, or waiting**, and surface any prompt / plan-review / numbered-selection screen to the user **the instant it appears, unprompted**. "Sent" is not "done." Full pattern: the [`agent-manager` Prime directive](../agent-manager/SKILL.md#️-prime-directive--never-go-silent).
+
 ### ⚠️ Decision Gate — ask the user before acting on choices
 When Claude Code finishes planning and presents **options / choices** (numbered list, yes/no, proceed/abort), the orchestrator should **stop and ask the user** which to pick before sending any key. Do NOT auto-select, press Enter, or choose on their behalf.
 1. `tmux capture-pane` — grab the current TUI state
@@ -218,7 +221,7 @@ When Claude Code finishes planning and presents **options / choices** (numbered 
 9. **`--json-schema` needs enough `--max-turns`** — Claude must read files before producing structured output.
 10. **Trust dialog appears once per directory** — first time only, then cached.
 11. **Background tmux sessions persist** — always `tmux kill-session -t <name>` when done.
-12. **CJK `send-keys` + Enter in one call drops the Enter** — with a Chinese/Japanese/Korean input method active on macOS, `tmux send-keys -t s "中文…" Enter` sends text but not Enter. Split into two calls: `send-keys "text"` then `send-keys "" Enter`. English-only prompts are safe in one call.
+12. **CJK `send-keys` + Enter in one call drops the Enter** — with a Chinese/Japanese/Korean input method active on macOS, `tmux send-keys -t s "中文…" Enter` sends text but not Enter. **Fix:** split into two calls (`send-keys "text"` then `send-keys "" Enter`), or — more robustly — inject via the paste buffer, which bypasses the IME entirely: `printf '%s' "中文…" | tmux load-buffer -b k -; tmux paste-buffer -t s -b k -d; tmux send-keys -t s C-m`. English-only prompts are safe in one call.
 13. **Slash commands only work in interactive mode** — in `-p`, describe the task in natural language.
 14. **`--bare` skips OAuth** — needs `ANTHROPIC_API_KEY` or an `apiKeyHelper` in settings.
 15. **Context degrades above ~70% window** — monitor with `/context`, proactively `/compact`.
