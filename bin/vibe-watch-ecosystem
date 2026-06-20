@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# vibe-watch-ecosystem — surface new/updated projects in the agent-orchestration
+# space so Hermes can decide whether any warrant a deeper look (or overlap with a
+# feature we're about to build).
+#
+#   vibe-watch-ecosystem            # prints JSON of repos new/updated since last run
+#   vibe-watch-ecosystem --queries  # print the search queries and exit
+#
+# Searches GitHub (via gh) for a few orchestration-related queries, keeps repos
+# with stars > 50 pushed in the last 7 days, diffs against the previous snapshot,
+# and prints a JSON array of what's new or freshly pushed. The full snapshot is
+# saved to ~/.vibe-stack/ecosystem-last-seen.json.
+#
+# Deps: gh (authenticated). Uses gh's built-in --jq, so no external jq needed.
+# bash 3.2 compatible.
+set -u
+
+STATE_DIR="${VIBE_STATE_DIR:-$HOME/.vibe-stack}"
+STATE_JSON="$STATE_DIR/ecosystem-last-seen.json"
+MIN_STARS="${VIBE_ECO_MIN_STARS:-50}"
+WINDOW_DAYS="${VIBE_ECO_WINDOW_DAYS:-7}"
+
+# Search queries (override with VIBE_ECO_QUERIES, newline-separated).
+QUERIES="${VIBE_ECO_QUERIES:-tmux agent orchestration
+hermes skill
+vibe coding agents
+claude code orchestrator}"
+
+if [ "${1:-}" = "--queries" ]; then printf '%s\n' "$QUERIES"; exit 0; fi
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0; fi
+
+command -v gh >/dev/null 2>&1 || { echo '[]'; echo "vibe-watch-ecosystem: gh not found" >&2; exit 0; }
+
+# Date N days ago, BSD (macOS) or GNU (Linux).
+since=$(date -v-"${WINDOW_DAYS}"d +%Y-%m-%d 2>/dev/null) || since=$(date -d "${WINDOW_DAYS} days ago" +%Y-%m-%d 2>/dev/null) || since=""
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/vibe-eco.XXXXXX") || { echo '[]'; exit 0; }
+trap 'rm -rf "$tmp"' EXIT
+cur="$tmp/cur"; : > "$cur"
+
+# Collect current results across queries → TSV: full_name \t stars \t pushed_at \t url \t description
+while IFS= read -r q; do
+  [ -n "$q" ] || continue
+  query="$q stars:>$MIN_STARS"
+  [ -n "$since" ] && query="$query pushed:>=$since"
+  gh search repos "$query" --limit 40 \
+     --json fullName,stargazersCount,pushedAt,url,description \
+     --jq '.[] | [.fullName,(.stargazersCount|tostring),.pushedAt,.url,((.description//"")|gsub("[\t\n\r]";" "))] | @tsv' \
+     2>/dev/null >> "$cur" || true
+done <<EOF
+$QUERIES
+EOF
+
+# Dedupe by full_name (keep first occurrence).
+dedup="$tmp/dedup"; awk -F'\t' '!seen[$1]++' "$cur" > "$dedup"
+
+# Previous full_name → pushed_at, parsed tolerantly from the prior JSON snapshot.
+prev="$tmp/prev"; : > "$prev"
+if [ -f "$STATE_JSON" ]; then
+  # pull "full_name":"x" and "pushed_at":"y" in document order, pair them up
+  grep -oE '"(full_name|pushed_at)":[[:space:]]*"[^"]*"' "$STATE_JSON" 2>/dev/null \
+    | sed -E 's/.*:[[:space:]]*"(.*)"$/\1/' \
+    | awk 'NR%2{n=$0; next} {print n"\t"$0}' > "$prev" || true
+fi
+
+# Emit JSON of repos that are new (unseen) or updated (pushed_at changed).
+jesc() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+out="$tmp/out"; : > "$out"
+first=1
+while IFS=$'\t' read -r name stars pushed url desc; do
+  [ -n "$name" ] || continue
+  was=$(awk -F'\t' -v n="$name" '$1==n{print $2; exit}' "$prev")
+  if [ -z "$was" ]; then reason="new"
+  elif [ "$was" != "$pushed" ]; then reason="updated"
+  else continue
+  fi
+  ename=$(printf '%s' "$name" | jesc); eurl=$(printf '%s' "$url" | jesc)
+  edesc=$(printf '%s' "$desc" | jesc); epushed=$(printf '%s' "$pushed" | jesc)
+  [ "$first" -eq 1 ] && first=0 || printf ',\n' >> "$out"
+  printf '  {"full_name":"%s","stars":%s,"pushed_at":"%s","url":"%s","reason":"%s","description":"%s"}' \
+    "$ename" "${stars:-0}" "$epushed" "$eurl" "$reason" "$edesc" >> "$out"
+done < "$dedup"
+
+printf '[\n'; [ -s "$out" ] && cat "$out" && printf '\n'; printf ']\n'
+
+# Save the full current snapshot as the new state.
+{
+  printf '[\n'; sf=1
+  while IFS=$'\t' read -r name stars pushed url desc; do
+    [ -n "$name" ] || continue
+    ename=$(printf '%s' "$name" | jesc); eurl=$(printf '%s' "$url" | jesc)
+    edesc=$(printf '%s' "$desc" | jesc); epushed=$(printf '%s' "$pushed" | jesc)
+    [ "$sf" -eq 1 ] && sf=0 || printf ',\n'
+    printf '  {"full_name":"%s","stars":%s,"pushed_at":"%s","url":"%s","description":"%s"}' \
+      "$ename" "${stars:-0}" "$epushed" "$eurl" "$edesc"
+  done < "$dedup"
+  printf '\n]\n'
+} > "$STATE_JSON" 2>/dev/null || true
