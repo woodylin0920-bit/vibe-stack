@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# vibe-review — lightweight pre-merge gate for a branch vs its base (default: main).
+#
+#   vibe-review <branch>
+#
+# Checks the BRANCH's version of each changed file (via `git show`, so it works
+# regardless of which branch is currently checked out):
+#   • git diff <base>...<branch> --stat        (what changed)
+#   • python3 -m py_compile   on changed *.py  (Python syntax)
+#   • bash -n                 on changed *.sh  (shell syntax)
+#
+# Prints PASS/FAIL with details. Exit 0 = pass, 1 = fail, 2 = usage/setup error.
+# bash 3.2 compatible; deps: git, python3 (for .py), bash. No extras.
+set -u
+
+BASE="${VIBE_REVIEW_BASE:-main}"
+branch="${1:-}"
+[ -n "$branch" ] || { echo "usage: vibe-review <branch>" >&2; exit 2; }
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "vibe-review: not inside a git repo" >&2; exit 2; }
+git rev-parse --verify --quiet "$branch" >/dev/null   || { echo "vibe-review: no such branch/ref: $branch" >&2; exit 2; }
+git rev-parse --verify --quiet "$BASE"   >/dev/null   || { echo "vibe-review: no such base ref: $BASE" >&2; exit 2; }
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/vibe-review.XXXXXX") || { echo "vibe-review: mktemp failed" >&2; exit 2; }
+trap 'rm -rf "$tmp"' EXIT
+
+echo "── vibe-review: $branch vs $BASE ──"
+echo
+echo "diffstat:"
+git diff "$BASE...$branch" --stat
+echo
+
+fail=0
+changed=$(git diff --name-only --diff-filter=ACMR "$BASE...$branch")
+
+# Run a syntax check on the branch's copy of each matching file.
+#   $1 = grep extension pattern   $2 = label   $3+ = checker command (file appended)
+check_group() {
+  local pat="$1" label="$2"; shift 2
+  local files f
+  files=$(printf '%s\n' "$changed" | grep -E "$pat" || true)
+  [ -n "$files" ] || return 0
+  echo "$label:"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if ! git show "$branch:$f" > "$tmp/blob" 2>/dev/null; then
+      echo "  skip $f (not present on $branch)"; continue
+    fi
+    if "$@" "$tmp/blob" >/dev/null 2>"$tmp/err"; then
+      echo "  ok   $f"
+    else
+      echo "  FAIL $f"; sed 's/^/         /' "$tmp/err"; fail=1
+    fi
+  done <<EOF
+$files
+EOF
+  echo
+}
+
+check_group '\.py$' "py_compile" python3 -m py_compile
+check_group '\.sh$' "bash -n"    bash -n
+
+if [ "$fail" -eq 0 ]; then
+  echo "RESULT: PASS"
+  exit 0
+fi
+echo "RESULT: FAIL"
+exit 1
