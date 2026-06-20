@@ -1,34 +1,44 @@
 # Deploying the orchestrator
 
-vibe-stack is **platform-agnostic**. The orchestrator (e.g. Hermes) — the always-on process that receives your chat messages and drives coding agents — runs the same way on a Mac, a Linux VPS, or any host that can stay on and reach the network. This guide covers both environments neutrally and flags where they differ, so you can pick what fits.
+The orchestrator (e.g. Hermes) is the always-on process that receives your messages — on **any channel** (Telegram, LINE, Slack, web, CLI) — and drives coding agents. It can run on a cloud VPS or on your Mac.
 
-## What the orchestrator needs (any platform)
+> **Recommended: a Linux VPS (cloud).** It's the simpler path for most people — always-on, no sleep issues, a fixed public IP, and SSH built in. Run it on your **Mac** only if you specifically need local file access, GUI agents, or desktop automation (see [Alternative: run it on your Mac](#alternative-run-it-on-your-mac-local)).
 
-1. **An always-on host** — the process must keep running for your phone to reach it.
-2. **Network access** — it polls Telegram (`getUpdates`); no inbound port or public webhook required.
-3. **The agent CLIs you'll drive** — Claude Code, Codex, OpenCode, etc.
-4. **`tmux` + `git`** — the control plane for interactive sessions and worktree/lane isolation.
-5. **Auth** — a logged-in session or API key for each agent (see [Auth](#auth-any-platform)).
+---
 
-## Platform differences to be aware of
+## Recommended: Linux VPS (cloud)
 
-| Concern | macOS (laptop/desktop) | Linux VPS (cloud) |
-|---------|------------------------|-------------------|
-| **Stays on by default?** | **No** — sleeps on lid-close / idle, which suspends the orchestrator and freezes tmux agents. Needs a keep-awake (below). | **Yes** — designed to run 24/7. |
-| **Service manager** | `launchd` (user LaunchAgent plist) | `systemd` (system service unit) |
-| **Survives power loss / reboot** | Auto-restarts via launchd, but only after login on some setups | Auto-starts on boot, unattended |
-| **GUI agents / desktop automation** | **Yes** — Terminal.app, browser control, AppleScript, screen-watching all work | **No** — headless; no GUI session |
-| **Local file access** | Your Mac's files | Only files on the VPS (clone repos there) |
-| **Cost / wear** | Free hardware, but battery/heat if kept awake | Small monthly fee (~€4–12), no wear |
-| **Reachable from anywhere** | Only while awake + online | Stable public host, always reachable |
+### 1. Pick a VPS
+Any small Linux VPS works: Hetzner CX22 (2 vCPU / 4 GB, ~€4/mo), DigitalOcean Basic (2 GB, ~$12/mo), Vultr/Linode/Lightsail. 2 vCPU / 4 GB handles the orchestrator plus a few agents. Ubuntu 22.04/24.04 LTS is the easy default; pick a region near you for low latency.
 
-**Neither is "correct" — it's a trade-off.** A Mac shines when work needs local files, GUI agents, or desktop automation. A Linux VPS shines for always-on, headless, repo-based work. You can run both and pick per task; the same skills (`agent-manager`, `claude-code`, `codex`) work on either host.
+### 2. Provision the base
+```bash
+ssh root@<vps-ip>
+adduser hermes && usermod -aG sudo hermes        # non-root user
+apt update && apt install -y git tmux python3 python3-venv curl
+# install the agent CLIs you'll drive:
+npm i -g @anthropic-ai/claude-code @openai/codex   # + opencode, per each agent's docs
+```
 
-## Running always-on
+### 3. Install the orchestrator
+Install your orchestrator (Hermes or equivalent) per its own docs. Broadly:
+```bash
+su - hermes
+git clone <orchestrator-repo> ~/.hermes && cd ~/.hermes
+python3 -m venv venv && ./venv/bin/pip install -e .
+```
 
-Install the orchestrator and agent CLIs per their own docs, then register it as a service so it auto-starts and auto-restarts.
+### 4. Connect a channel (Telegram shown; any channel works)
+1. Create a bot with [@BotFather](https://t.me/BotFather); copy the token.
+2. For group use, turn **off** the bot's privacy mode so it can read group messages.
+3. Put the token + allowed chat IDs in the orchestrator config (e.g. `~/.hermes/.env`):
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   ```
+4. It long-polls the channel — **no inbound port or public webhook needed** (tiny attack surface, works behind NAT). vibe-stack is channel-agnostic; swap Telegram for any channel the orchestrator supports.
 
-### Linux (systemd)
+### 5. Always-on via systemd
+Auto-start on boot, auto-restart on crash:
 ```ini
 # /etc/systemd/system/hermes.service
 [Unit]
@@ -52,8 +62,18 @@ sudo systemctl enable --now hermes
 sudo systemctl status hermes      # verify
 journalctl -u hermes -f           # live logs
 ```
+Now message your bot from your phone — it answers whether or not any laptop is open. **No keep-awake, no Tailscale, no GUI** — that's why cloud is the recommended default.
 
-### macOS (launchd)
+### 6. Auth for the agents
+Run each agent's login once over SSH (`claude auth login`, `codex login`, `opencode auth login`). When an OAuth URL appears, open it on your phone and approve. For unattended re-auth later, prefer long-lived credentials so you never need a desktop browser on the VM: `claude setup-token` / `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, provider keys (`OPENROUTER_API_KEY`). Remote re-auth flow (surface the login URL to the user via chat) is in [`agent-manager`](../agent-manager/SKILL.md).
+
+---
+
+## Alternative: run it on your Mac (local)
+
+Choose the Mac when the work genuinely needs it: **local file access**, **GUI agents / desktop automation** (Terminal.app, browser control, AppleScript, screen-watching), or macOS-only tooling. The trade-off is that a laptop isn't built to be an always-on server.
+
+### Always-on via launchd
 ```xml
 <!-- ~/Library/LaunchAgents/ai.hermes.gateway.plist -->
 <?xml version="1.0" encoding="UTF-8"?>
@@ -71,42 +91,33 @@ journalctl -u hermes -f           # live logs
 ```
 ```bash
 launchctl load -w ~/Library/LaunchAgents/ai.hermes.gateway.plist
-launchctl list | grep hermes      # verify
+launchctl list | grep hermes
 ```
 
-> **macOS only — keep it awake.** launchd keeps the *process* alive, but macOS still sleeps the *machine* on lid-close/idle, which suspends everything. Two options, your call:
-> - **Persistent `caffeinate`** (lid stays open): a second LaunchAgent running `/usr/bin/caffeinate -i -m -s`. Simple, reversible, works on battery.
-> - **`sudo pmset -c disablesleep 1`** (allows lid-closed on AC power): no caffeinate needed, but requires AC and is a system-wide power change.
->
-> Linux VPS users can ignore this entirely — there is no sleep.
+### Keep it awake (macOS only)
+launchd keeps the *process* alive, but macOS sleeps the *machine* on lid-close/idle, which suspends the gateway and freezes every tmux agent. Two options:
+- **Persistent `caffeinate`** (lid stays open): a LaunchAgent running `/usr/bin/caffeinate -i -m -s`. Simple, reversible, works on battery.
+- **`sudo pmset -c disablesleep 1`** (allows lid-closed on AC): no caffeinate, but requires AC and is a system-wide change.
 
-## Connecting Telegram (any platform)
+### Reach it from your phone
+A Mac has no fixed public IP, so:
+- **Same WiFi:** `http://<mac-lan-ip>:<port>`.
+- **From anywhere:** install **Tailscale** on the Mac and phone, use the Tailscale IP/name.
 
-1. Create a bot with [@BotFather](https://t.me/BotFather); copy the token.
-2. For group use, turn **off** the bot's privacy mode in BotFather so it can read group messages.
-3. Put the token + your allowed chat IDs in the orchestrator's config (e.g. `~/.hermes/.env`):
-   ```
-   TELEGRAM_BOT_TOKEN=123456:ABC...
-   ```
-4. The orchestrator long-polls Telegram — no public webhook or open port needed (smaller attack surface, works behind NAT).
+None of this is needed on a cloud VPS — which is exactly why cloud is the default recommendation.
 
-## Minimal Linux VPS provisioning
+---
 
-If you go the cloud route, any small VPS works (Hetzner CX22 ~€4/mo, DigitalOcean 2 GB ~$12/mo, Vultr/Linode/Lightsail). 2 vCPU / 4 GB handles the orchestrator plus a few agents. Ubuntu LTS is the easy default.
-```bash
-ssh root@<vps-ip>
-adduser hermes && usermod -aG sudo hermes
-apt update && apt install -y git tmux python3 python3-venv curl
-# install agent CLIs, e.g.:
-npm i -g @anthropic-ai/claude-code @openai/codex
-# then install the orchestrator and register the systemd service above
-```
+## Platform differences (reference)
 
-## Auth (any platform)
+| Concern | Linux VPS (recommended) | macOS (local) |
+|---------|-------------------------|---------------|
+| Stays on by default? | **Yes** | No — needs keep-awake |
+| Service manager | `systemd` | `launchd` |
+| Reach from anywhere | Fixed public IP + SSH | Needs Tailscale |
+| Survives reboot/power loss | Unattended | After login; keep-awake resets |
+| GUI agents / desktop automation | No (headless) | **Yes** |
+| Local file access | Files on the VPS | Your Mac's files |
+| Cost | ~€4–12/mo | Free HW, battery/heat if kept awake |
 
-Run each agent's login once (`claude auth login`, `codex login`, `opencode auth login`). On a headless VPS, when an OAuth URL appears, open it on your phone and approve. For unattended re-auth later, prefer long-lived credentials so you never need a desktop browser on the host:
-- Claude: `claude setup-token` or `ANTHROPIC_API_KEY`
-- Codex: `OPENAI_API_KEY` / `codex login`
-- OpenCode: provider key (e.g. `OPENROUTER_API_KEY`)
-
-See each agent's skill for details. The remote re-auth flow (surface the login URL to the user via chat) is in [`agent-manager`](../agent-manager/SKILL.md).
+You can run both and pick per task; the same skills (`agent-manager`, `claude-code`, `codex`, `coffee-time`) work on either host — only the host differs.

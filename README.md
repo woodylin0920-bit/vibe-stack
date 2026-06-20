@@ -2,6 +2,8 @@
 
 A Hermes skill playbook for **controlling coding agents from your phone** — spawn agents, assign tasks, review output, and merge work, all via chat. Watch a session in a mobile/web app; steer it from a chat message.
 
+**New here?** Start with **[GETTING-STARTED.md](GETTING-STARTED.md)** — a cloud-first quickstart.
+
 ## Skills
 
 | Skill | What it does |
