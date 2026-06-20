@@ -1,7 +1,7 @@
 ---
 name: agent-manager
 description: "Remote control plane for coding agents (Claude Code, Codex, OpenCode) — open an agent in a project, send tasks, drive slash commands/keys from a chat app, check status, review output, and handle per-agent auth."
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
@@ -33,6 +33,19 @@ This is the **control plane** — it coordinates agents, it does not replace the
 ```
 
 **The key insight that makes this skill exist:** a user watching a session in a mobile/web app (e.g. the claude.ai app observing a `--remote-control` session) can *see* everything but **cannot inject slash commands or control keys** — there's no way to type `/compact`, `/model`, `/login`, press `Esc`, or pick a menu option from that UI. The orchestrator is the **input layer** that bridges the gap: the user expresses intent in chat, the orchestrator translates it into `tmux send-keys` against the live session.
+
+---
+
+## ⚠️ Prime directive — never go silent
+
+**After dispatching any task, the orchestrator MUST NOT go silent.** Fire-and-forget is forbidden. Proactive polling is mandatory — every other section of this skill exists to serve this rule.
+
+- **Poll after every injection.** 3–5 s after *each* `send-keys` / `paste-buffer`, run `capture-pane` and confirm the agent actually advanced (new output, tool activity, or a prompt). If nothing changed, the input may not have landed (e.g. a dropped Enter) — re-check and re-send.
+- **Surface prompts the instant they appear — unprompted.** The moment a new prompt / selection / permission / plan-review screen shows up, *at any time* (not only right after a dispatch), push it to the user without being asked. A silent agent sitting on a dialog is a bug, not a pause.
+- **Keep watching until a terminal state.** Continue monitoring (event-driven `watch_patterns` + idle fallback, see below) until the agent is unambiguously **done**, **errored**, or **waiting on the user** — then report.
+- **"Dispatched" ≠ "done."** "I sent the task" is not a result. Only an *observed* outcome (files changed, tests run, commit made) counts as completion.
+
+How the rest of the skill serves this: the [chat-input pattern](#-the-remote-control--chat-input-pattern-first-class) is how you *act*, [prompt detection](#detecting-interactive-prompts-so-the-agent-doesnt-sit-silently) is how you *watch*, and the [Decision Gate](#️-decision-gate) is what you do when watching surfaces a choice.
 
 ---
 
@@ -162,6 +175,9 @@ For any agent not listed, capture five facts before driving it remotely:
 
 ## Rules — human-in-the-loop
 
+### ⚠️ Never go silent (prime directive)
+After dispatching any task, keep the user informed: `capture-pane` 3–5 s after every injection to confirm progress, surface any new prompt the instant it appears (unprompted), and report the observed outcome — not just "dispatched". Fire-and-forget is forbidden. Full rule: [Prime directive](#️-prime-directive--never-go-silent).
+
 ### ⚠️ Decision Gate
 When an agent presents **options / choices** (numbered list, yes/no, proceed/abort, plan-review), **stop and ask the user** which to pick before injecting any key. Do NOT auto-select, press Enter, or choose on their behalf.
 1. `capture-pane` the current state.
@@ -184,5 +200,5 @@ After a task finishes, summarize to the user what changed (files, commits, test 
 4. **OpenCode exits on `Ctrl+C`, never `/exit`** — `/exit` opens an agent-selector dialog instead.
 5. **Codex must run inside a git repo** — it refuses otherwise.
 6. **Remote re-auth needs the URL surfaced** — capture it from the pane and send it to the user; don't click Authorize yourself.
-7. **Silent waits** — without prompt detection (watch_patterns + idle fallback), an agent stuck on a dialog looks like it's "still working". 
+7. **Going silent after dispatch** — the cardinal sin (see [Prime directive](#️-prime-directive--never-go-silent)). An agent stuck on a dialog looks like it's "still working"; without proactive polling + prompt detection you'll never notice. Poll after every injection; surface prompts unprompted.
 8. **Clean up tmux sessions** — `tmux kill-session` when done, or they leak.
