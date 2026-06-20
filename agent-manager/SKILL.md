@@ -1,7 +1,7 @@
 ---
 name: agent-manager
 description: "Remote control plane for coding agents (Claude Code, Codex, OpenCode) — open an agent in a project, send tasks, drive slash commands/keys from a chat app, check status, review output, and handle per-agent auth."
-version: 1.6.0
+version: 1.7.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
@@ -94,6 +94,26 @@ while not done_criteria_met and not blocked_on_a_real_decision:
 report(result_to_user)
 ```
 `/loop` inside an interactive agent can schedule this cadence within a session; otherwise the orchestrator runs the loop. Always cap iterations / budget so a stuck loop **escalates to the user** instead of spinning.
+
+---
+
+## ⚠️ One agent, one worktree — never share a working tree
+
+A first-class design principle, learned the hard way: **two or more coding agents running in the same working directory clobber each other.** They check out different branches under one `.git`, `git reset`/`git checkout` yanks the tree out from under a sibling mid-edit, untracked files vanish, and "the branch HEAD moved while I was working" becomes routine. The shared filesystem is the bug — not the agents.
+
+**The rule: every agent gets its own isolated directory via `git worktree add`. No exceptions for parallel work.**
+
+```bash
+# One worktree + branch per agent — they never touch each other's files.
+git -C /repo worktree add ../lanes/feat-x -b lane/feat-x
+tmux new-session -d -s claude-feat-x -x 140 -y 40
+tmux send-keys -t claude-feat-x 'cd /repo/../lanes/feat-x && claude --remote-control feat-x' Enter
+```
+
+- **Each agent commits to its own `lane/<slug>` branch**, in its own worktree — never to a branch a sibling is also on. This is what makes the [lane primitive](#the-lane-primitive-first-class) safe and what keeps `main` integration the sole job of the [merge captain](#merge-captain).
+- **Symptoms you skipped this:** a file you wrote is suddenly untracked or gone; `git status` shows changes you didn't make; HEAD is a different commit than a minute ago; an edit fails with "file modified since read." All of these mean another agent is sharing your tree — stop and isolate.
+- **One repo, many worktrees is cheap.** `git worktree` shares the object store, so N isolated working dirs cost almost nothing. Tear each down on merge/discard: `git worktree remove <path>` + delete the branch (see [Fleet lifecycle](#fleet-lifecycle-kanban-model)).
+- **The only safe shared-tree case is a single agent.** The moment work goes parallel, it goes multi-worktree. See also [pitfall #10](#pitfalls--gotchas).
 
 ---
 
