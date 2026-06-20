@@ -61,12 +61,22 @@ GETTING-STARTED.md          # cloud-first quickstart
 ## The `vibe` CLI
 
 `bin/vibe` is the shell API the `agent-manager` skill calls to drive tmux-hosted
-agents — `vibe status` (JSON: every agent session, its state, and last output lines),
-`vibe send`, `vibe new`, and `vibe kill`. Put it on your `PATH`:
+agents. Put it on your `PATH`:
 
 ```bash
 chmod +x bin/vibe && sudo ln -sf $PWD/bin/vibe /usr/local/bin/vibe
 ```
+
+| Command | What it does |
+|---------|--------------|
+| `vibe status` | JSON: every agent session, its state, and last output lines |
+| `vibe status --pretty` | Human-readable status table (no lines) — for chat/Telegram |
+| `vibe summary` | Rich one-message fleet overview: each agent's state, workdir, uptime, and task — for chat/Telegram |
+| `vibe list` | JSON array of agent session names (`--pretty` for one per line) |
+| `vibe send <session> <msg…>` | Send a message to a session (CJK-safe), press Enter |
+| `vibe task <session> <desc…>` | Set the task description `vibe summary` shows for a session |
+| `vibe new <agent> <session> <workdir> <task>` | Spawn an agent (claude\|codex\|opencode), cd in, paste the task |
+| `vibe kill <session>` | Tear a session down cleanly |
 
 Then `vibe status | jq` from anywhere, or let Hermes call it for you.
 
